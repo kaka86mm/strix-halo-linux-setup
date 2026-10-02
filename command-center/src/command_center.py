@@ -42,6 +42,20 @@ from modules.llm_controller import LLMController
 TRAY_ICON_SIZE = 24
 VERSION = "6.11.0"
 
+DASHBOARD_WINDOW_TITLE = "Strix Halo Dashboard"
+DASHBOARD_WINDOW_ROLE = "strix-halo-dashboard"
+KWIN_DASHBOARD_SCRIPT_NAME = "strix_halo_dashboard_anchor"
+RGB_COLOR_PRESETS = [
+    ("Ice", "7FDBFF"),
+    ("Mint", "2ECC71"),
+    ("Lemon", "F1C40F"),
+    ("Amber", "F39C12"),
+    ("Coral", "FF6B6B"),
+    ("Rose", "FF4D8D"),
+    ("Violet", "9B59B6"),
+    ("White", "FFFFFF"),
+]
+
 
 class _MetricsRelay(QObject):
     """Carries worker-thread metric snapshots into the Qt main thread."""
