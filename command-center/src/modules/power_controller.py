@@ -37,13 +37,16 @@ _PPD_TARGETS = {
 class PowerController:
     """Manages power profiles and battery settings via z13ctl."""
 
-    def __init__(self, notifier):
+    def __init__(self, notifier, display_ctrl=None):
         self.notifier = notifier
+        self.display = display_ctrl
         self.available = self.check_available()
         self.current_profile = self._read_current_profile()
         self._auto_enabled = False
         self._ac_profile = "performance"
         self._battery_profile = "efficient"
+        self._battery_refresh = 60    # 0 disables the display part
+        self._ac_refresh = 0          # 0 = panel maximum on AC
         self._last_plugged = None
         self._load_auto_config()
 
@@ -198,6 +201,10 @@ class PowerController:
                         elif k == 'BATTERY_PROFILE':
                             if v in POWER_PROFILES:
                                 self._battery_profile = v
+                        elif k == 'REFRESH_BATTERY':
+                            self._battery_refresh = int(v) if v.isdigit() else 0
+                        elif k == 'REFRESH_AC':
+                            self._ac_refresh = int(v) if v.isdigit() else 0
         except Exception:
             pass
 
@@ -208,6 +215,8 @@ class PowerController:
                 f'AUTO_SWITCH={"1" if self._auto_enabled else "0"}',
                 f'AC_PROFILE={self._ac_profile}',
                 f'BATTERY_PROFILE={self._battery_profile}',
+                f'REFRESH_BATTERY={self._battery_refresh}',
+                f'REFRESH_AC={self._ac_refresh}',
             ]
             _AUTO_CONFIG_FILE.write_text('\n'.join(lines) + '\n')
         except Exception:
@@ -249,8 +258,23 @@ class PowerController:
             self._last_plugged = plugged
             target = self._ac_profile if plugged else self._battery_profile
             self.set_profile(target)
+            self._apply_auto_refresh(plugged)
         except Exception:
             pass  # don't let a sysfs read failure kill the caller
+
+    def _apply_auto_refresh(self, plugged):
+        """Follow the power source with the panel refresh rate (GNOME
+        DisplayConfig); GNOME Settings offers the same switch manually,
+        this wires it to AC/battery transitions. Rates of 0 skip."""
+        if self.display is None or not self.display.available:
+            return
+        if plugged:
+            rate = self._ac_refresh or max(self.display.get_refresh_rates() or [0])
+        else:
+            rate = self._battery_refresh
+        if not rate or self.display.get_current_rate() == rate:
+            return
+        self.display.set_refresh(rate)
 
     def get_profile_details(self):
         """Return (spl, sppt, fppt) wattages parsed from z13ctl status."""

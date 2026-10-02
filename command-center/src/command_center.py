@@ -38,9 +38,10 @@ from modules.notifications import NotificationManager
 from modules.rgb_controller import RGBController
 from modules.power_controller import PowerController
 from modules.llm_controller import LLMController
+from modules.display_controller import DisplayController
 
 TRAY_ICON_SIZE = 24
-VERSION = "6.12.0"
+VERSION = "6.13.0"
 
 DASHBOARD_WINDOW_TITLE = "Strix Halo Dashboard"
 DASHBOARD_WINDOW_ROLE = "strix-halo-dashboard"
@@ -1077,7 +1078,8 @@ class CommandCenterApp(QSystemTrayIcon):
         self.config = ConfigManager()
         self.notifier = NotificationManager(self)
         self.rgb = RGBController(self.notifier)
-        self.power = PowerController(self.notifier)
+        self.display = DisplayController(self.notifier)
+        self.power = PowerController(self.notifier, display_ctrl=self.display)
         self.llm = LLMController(self.notifier)
 
         self.dashboard = DashboardWindow(self.power, self.rgb, self.config, self.notifier, llm_ctrl=self.llm)

@@ -2,6 +2,11 @@
 
 All notable changes to Strix Halo Linux Setup will be documented in this file.
 
+## [6.13.0] - 2026-10-03
+
+### Added
+- **Panel refresh follows power source**: Auto Settings now switches the built-in panel to a lower refresh rate on battery and back to its maximum on AC via GNOME's DisplayConfig D-Bus API (the same switch GNOME Settings exposes manually). Configurable in auto.conf with `REFRESH_BATTERY`/`REFRESH_AC` (0 disables either side).
+
 ## [6.12.0] - 2026-10-02
 
 ### Changed

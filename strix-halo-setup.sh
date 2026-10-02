@@ -3,7 +3,7 @@
 # ==============================================================================
 # Strix Halo Linux Setup — Unified Installer
 # Author: th3cavalry using Copilot
-# Version: 6.12.0
+# Version: 6.13.0
 #
 # Supported devices (Strix Halo platform — AMD Ryzen AI MAX / MAX+):
 # BEGIN AUTO-GENERATED SUPPORTED DEVICES
@@ -81,7 +81,7 @@ while [[ $# -gt 0 ]]; do
         --no-modules)    SKIP_MODULES=true; shift ;;
         -h|--help)
             cat << 'EOF'
-Strix Halo Linux Setup — Unified Installer v6.12.0
+Strix Halo Linux Setup — Unified Installer v6.13.0
 
 Usage: sudo ./strix-halo-setup.sh [OPTIONS]
 
@@ -119,7 +119,7 @@ done
 GITHUB_RAW_URL="https://raw.githubusercontent.com/th3cavalry/GZ302-Linux-Setup/main"
 
 # --- Version (read once at startup) ---
-SETUP_VERSION="6.12.0"
+SETUP_VERSION="6.13.0"
 
 # --- Script directory detection ---
 resolve_script_dir() {
