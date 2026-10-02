@@ -2,6 +2,11 @@
 
 All notable changes to Strix Halo Linux Setup will be documented in this file.
 
+## [6.14.0] - 2026-10-03
+
+### Added
+- **RGB follows power source**: Auto Settings now snapshots the lighting state and, on battery, stops keyboard/lightbar animations, turns the lightbar off and dims the keyboard to low; plugging back in restores the snapshot (color, brightness, animation, lightbar). The RGB controller now tracks its own state (z13ctl has no query API).
+
 ## [6.13.0] - 2026-10-03
 
 ### Added

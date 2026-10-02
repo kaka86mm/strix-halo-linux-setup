@@ -25,6 +25,15 @@ class RGBController:
         self.notifier = notifier
         self.window_animation_thread = None
         self.window_animation_stop = None
+        # Best-effort lighting state (z13ctl has no query API); updated by
+        # every setter so power-linkage can snapshot and restore.
+        self._kb_color = None
+        self._kb_brightness = 2
+        self._kb_animation = None
+        self._lb_color = None
+        self._lb_brightness = 2
+        self._lb_animation = None
+        self._lb_on = True
         # Command queue for thread-safe serialization
         self._cmd_queue = queue.Queue()
         self._queue_worker_started = False
@@ -157,6 +166,10 @@ class RGBController:
             return
 
         clean_color = self._normalize_hex_color(hex_color)
+        if device == "keyboard":
+            self._kb_color, self._kb_animation = clean_color, None
+        else:
+            self._lb_color, self._lb_animation, self._lb_on = clean_color, None, True
         self._run_bg_command(
             self._device_command(
                 device, "apply", "--mode", "static", "--color", clean_color
@@ -170,6 +183,7 @@ class RGBController:
             self.notifier.notify_error("RGB", "z13ctl not installed")
             return
         speed_name = _SPEED_MAP.get(speed, "normal")
+        self._kb_animation = anim_type
         cmd = self._device_command("keyboard", "apply")
         desc = ""
         if anim_type == "breathing":
@@ -199,6 +213,7 @@ class RGBController:
             self.notifier.notify_error("RGB", "z13ctl not installed")
             return
         level_name = {0: "off", 1: "low", 2: "medium", 3: "high"}.get(level, "medium")
+        self._kb_brightness = level
         self._run_bg_command(
             self._device_command("keyboard", "brightness", level_name),
             success_msg=f"Keyboard brightness set to {level_name}",
@@ -218,6 +233,7 @@ class RGBController:
     def turn_off_keyboard(self):
         if not self.keyboard_available:
             return
+        self._kb_brightness, self._kb_animation = 0, None
         self._run_bg_command(
             self._device_command("keyboard", "off"),
             success_msg="Keyboard lighting turned off",
@@ -227,6 +243,8 @@ class RGBController:
     def turn_off_lightbar(self):
         if not self.window_available:
             return
+        self._lb_on, self._lb_animation = False, None
+        self.stop_window_animation()
         self._run_bg_command(
             self._device_command("lightbar", "off"),
             success_msg="Backlight turned off",
@@ -250,6 +268,7 @@ class RGBController:
         if level == 0:
             self.turn_off_lightbar()
         else:
+            self._lb_on, self._lb_brightness = True, level
             level_name = {1: "low", 2: "medium", 3: "high"}.get(level, "medium")
             self._run_bg_command(
                 self._device_command("lightbar", "brightness", level_name),
@@ -275,6 +294,7 @@ class RGBController:
 
     def start_window_animation(self, anim_type, c1=None, c2=None, speed=2):
         self.stop_window_animation()
+        self._lb_animation, self._lb_on = anim_type, True
         speed_name = _SPEED_MAP.get(speed, "normal")
         # Use z13ctl's built-in animation modes when available
         if anim_type == "rainbow":
@@ -301,3 +321,49 @@ class RGBController:
         self.notifier.notify(
             "Backlight", f"Animation: {anim_type.title()}", "success", 2000
         )
+
+    # --- Power linkage: snapshot / battery policy / restore ---
+
+    def snapshot_rgb_state(self):
+        return {
+            "kb_color": self._kb_color,
+            "kb_brightness": self._kb_brightness,
+            "kb_animation": self._kb_animation,
+            "lb_color": self._lb_color,
+            "lb_brightness": self._lb_brightness,
+            "lb_animation": self._lb_animation,
+            "lb_on": self._lb_on,
+        }
+
+    def apply_battery_rgb_policy(self):
+        """Battery mode: kill animations, lightbar off, keyboard static low."""
+        if not self.is_available():
+            return
+        if self._lb_on or self._lb_animation:
+            self.turn_off_lightbar()
+        if self._kb_animation:
+            self.set_static_color("keyboard", self._kb_color or "FFFFFF")
+            self._kb_animation = None
+        if self._kb_brightness > 1:
+            self.set_keyboard_brightness(1)
+
+    def restore_rgb_state(self, snap):
+        """Re-apply a snapshot taken before battery policy was applied."""
+        if not self.is_available():
+            return
+        if snap["kb_animation"]:
+            self.set_keyboard_animation(snap["kb_animation"])
+        elif snap["kb_color"]:
+            self.set_static_color("keyboard", snap["kb_color"])
+        if snap["kb_brightness"]:
+            self.set_keyboard_brightness(snap["kb_brightness"])
+        else:
+            self.turn_off_keyboard()
+        if snap["lb_on"]:
+            if snap["lb_animation"]:
+                self.start_window_animation(snap["lb_animation"])
+            elif snap["lb_color"]:
+                self.set_static_color("lightbar", snap["lb_color"])
+            self.set_window_backlight(snap["lb_brightness"] or 2)
+        else:
+            self.turn_off_lightbar()

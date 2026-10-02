@@ -37,9 +37,10 @@ _PPD_TARGETS = {
 class PowerController:
     """Manages power profiles and battery settings via z13ctl."""
 
-    def __init__(self, notifier, display_ctrl=None):
+    def __init__(self, notifier, display_ctrl=None, rgb_ctrl=None):
         self.notifier = notifier
         self.display = display_ctrl
+        self.rgb = rgb_ctrl
         self.available = self.check_available()
         self.current_profile = self._read_current_profile()
         self._auto_enabled = False
@@ -48,6 +49,7 @@ class PowerController:
         self._battery_refresh = 60    # 0 disables the display part
         self._ac_refresh = 0          # 0 = panel maximum on AC
         self._last_plugged = None
+        self._rgb_snapshot = None
         self._load_auto_config()
 
     def check_available(self):
@@ -259,8 +261,29 @@ class PowerController:
             target = self._ac_profile if plugged else self._battery_profile
             self.set_profile(target)
             self._apply_auto_refresh(plugged)
+            self._apply_auto_rgb(plugged)
         except Exception:
             pass  # don't let a sysfs read failure kill the caller
+
+    def _apply_auto_rgb(self, plugged):
+        """Follow the power source with RGB: battery kills animations and
+        the lightbar and dims the keyboard; AC restores the snapshot."""
+        if self.rgb is None or not self.rgb.is_available():
+            return
+        if not plugged:
+            if self._rgb_snapshot is None:
+                self._rgb_snapshot = self.rgb.snapshot_rgb_state()
+                self.rgb.apply_battery_rgb_policy()
+                self.notifier.notify(
+                    "Auto Power",
+                    "RGB: effects off, keyboard dimmed",
+                    "info",
+                    2500,
+                )
+        elif self._rgb_snapshot is not None:
+            self.rgb.restore_rgb_state(self._rgb_snapshot)
+            self._rgb_snapshot = None
+            self.notifier.notify("Auto Power", "RGB restored", "info", 2000)
 
     def _apply_auto_refresh(self, plugged):
         """Follow the power source with the panel refresh rate (GNOME
