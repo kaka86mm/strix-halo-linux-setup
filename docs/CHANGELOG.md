@@ -2,6 +2,11 @@
 
 All notable changes to Strix Halo Linux Setup will be documented in this file.
 
+## [6.9.0] - 2026-10-02
+
+### Added
+- **AI Engine dashboard controls**: The Strix Halo dashboard and tray menu now expose Start/Stop/Restart controls plus live status (serving / loading / stopped) for the local gufo inference container (`gufo-flashnext`, Qwen3.8-Flash-Next on gfx1151). Controls degrade gracefully and show a warning when the container or docker is absent.
+
 ## [6.8.0] - 2026-05-23
 
 ### Added

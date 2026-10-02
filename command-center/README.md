@@ -25,6 +25,7 @@ This is a G-Helper inspired GUI utility that provides a cross-device monitoring 
 - **Real-time Monitoring**: Track APU temperature, CPU load, battery state, and available fan telemetry across Strix Halo devices.
 - **Visual Feedback**: The tray icon changes based on the active power profile and charging state.
 - **Fan Curve Editor**: (In Dashboard) Apply custom T:P fan curves when the control backend is available.
+- **AI Engine Controls**: (In Dashboard & Tray) Start/Stop/Restart the local gufo inference container (`gufo-flashnext`, Qwen3.8-Flash-Next) and watch its live state — serving, loading, or stopped.
 
 ## Technology Stack
 

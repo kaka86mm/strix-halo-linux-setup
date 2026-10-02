@@ -35,9 +35,10 @@ from modules.config import ConfigManager
 from modules.notifications import NotificationManager
 from modules.rgb_controller import RGBController
 from modules.power_controller import PowerController
+from modules.llm_controller import LLMController
 
 TRAY_ICON_SIZE = 24
-VERSION = "6.8.0"
+VERSION = "6.9.0"
 DASHBOARD_WINDOW_TITLE = "Strix Halo Dashboard"
 DASHBOARD_WINDOW_ROLE = "strix-halo-dashboard"
 KWIN_DASHBOARD_SCRIPT_NAME = "strix_halo_dashboard_anchor"
@@ -67,12 +68,13 @@ class DashboardWindow(QWidget):
         ("Maximum\n90W",    "maximum",   "#e33"),
     ]
 
-    def __init__(self, power_ctrl, rgb_controller, config, notifier):
+    def __init__(self, power_ctrl, rgb_controller, config, notifier, llm_ctrl=None):
         super().__init__()
         self.power = power_ctrl
         self.rgb = rgb_controller
         self.config = config
         self.notifier = notifier
+        self.llm = llm_ctrl
         self._profile_btns = {}
         self._rgb_buttons = []
         self._fan_curve_placeholder = "48:2,53:22,57:30,60:43,63:56,65:68,70:89,76:102"
@@ -108,6 +110,9 @@ class DashboardWindow(QWidget):
         root.addWidget(self._build_rgb_section())
         root.addWidget(self._build_divider())
         root.addWidget(self._build_fan_section())
+        if self.llm is not None:
+            root.addWidget(self._build_divider())
+            root.addWidget(self._build_llm_section())
         root.addWidget(self._build_footer())
 
     def _build_header(self):
@@ -343,6 +348,60 @@ class DashboardWindow(QWidget):
         vbox.addLayout(hbox)
         return section
 
+    def _build_llm_section(self):
+        section = QFrame()
+        section.setObjectName("section")
+        vbox = QVBoxLayout(section)
+        vbox.setContentsMargins(14, 10, 14, 10)
+        vbox.setSpacing(6)
+        vbox.addWidget(self._section_title("AI ENGINE (GUFO)"))
+
+        hbox = QHBoxLayout()
+        hbox.setSpacing(6)
+
+        self.llm_status_lbl = QLabel(self.llm.get_status_text())
+        self.llm_status_lbl.setObjectName("llm_status")
+        hbox.addWidget(self.llm_status_lbl)
+        hbox.addStretch()
+
+        start_btn = QPushButton("Start")
+        start_btn.setObjectName("llm_btn")
+        start_btn.setFixedHeight(28)
+        start_btn.clicked.connect(lambda: self._llm_action("start"))
+
+        stop_btn = QPushButton("Stop")
+        stop_btn.setObjectName("llm_btn")
+        stop_btn.setFixedHeight(28)
+        stop_btn.clicked.connect(lambda: self._llm_action("stop"))
+
+        restart_btn = QPushButton("Restart")
+        restart_btn.setObjectName("llm_btn")
+        restart_btn.setFixedHeight(28)
+        restart_btn.clicked.connect(lambda: self._llm_action("restart"))
+
+        self._llm_btns = (start_btn, stop_btn, restart_btn)
+        for btn in self._llm_btns:
+            hbox.addWidget(btn)
+        vbox.addLayout(hbox)
+        return section
+
+    def _llm_action(self, action):
+        if self.llm is None:
+            return
+        getattr(self.llm, action)()
+        QTimer.singleShot(400, self._refresh_llm_state)
+
+    def _refresh_llm_state(self):
+        if self.llm is None or not hasattr(self, "llm_status_lbl"):
+            return
+        running = self.llm.is_running() if self.llm.available else False
+        ok, _ = self.llm.get_health() if running else (False, "")
+        self.llm_status_lbl.setText(self.llm.get_status_text())
+        self.llm_status_lbl.setProperty("state", "serving" if ok else ("loading" if running else "stopped"))
+        # re-apply stylesheet so property-based selectors refresh
+        self.llm_status_lbl.style().unpolish(self.llm_status_lbl)
+        self.llm_status_lbl.style().polish(self.llm_status_lbl)
+
     def _build_footer(self):
         footer = QFrame()
         footer.setObjectName("footer")
@@ -392,6 +451,11 @@ class DashboardWindow(QWidget):
 
         for btn in self._rgb_buttons:
             btn.setEnabled(rgb_available)
+
+        if self.llm is not None and hasattr(self, "_llm_btns"):
+            for btn in self._llm_btns:
+                btn.setEnabled(self.llm.available)
+            self._refresh_llm_state()
 
     def _section_title(self, text):
         lbl = QLabel(text)
@@ -511,6 +575,26 @@ class DashboardWindow(QWidget):
             QPushButton#apply_btn:hover {
                 background-color: #ff4655;
                 border-color: #ff4655;
+                color: #fff;
+            }
+
+            QLabel#llm_status {
+                font-size: 11px;
+                color: #888;
+            }
+            QLabel#llm_status[state="serving"] { color: #2e8b57; }
+            QLabel#llm_status[state="loading"] { color: #d9a441; }
+            QLabel#llm_status[state="stopped"] { color: #666; }
+            QPushButton#llm_btn {
+                background-color: #1c1c1c;
+                border: 1px solid #2a2a2a;
+                border-radius: 5px;
+                color: #aaa;
+                padding: 0 12px;
+            }
+            QPushButton#llm_btn:hover {
+                background-color: #252525;
+                border-color: #444;
                 color: #fff;
             }
 
@@ -636,8 +720,9 @@ class CommandCenterApp(QSystemTrayIcon):
         self.notifier = NotificationManager(self)
         self.rgb = RGBController(self.notifier)
         self.power = PowerController(self.notifier)
-        
-        self.dashboard = DashboardWindow(self.power, self.rgb, self.config, self.notifier)
+        self.llm = LLMController(self.notifier)
+
+        self.dashboard = DashboardWindow(self.power, self.rgb, self.config, self.notifier, llm_ctrl=self.llm)
         self._kwin_script_loaded = False
         self._setup_kwin_dashboard_positioner()
         
@@ -776,6 +861,25 @@ class CommandCenterApp(QSystemTrayIcon):
 
         self.menu.addSeparator()
 
+        # --- AI Engine (gufo) ---
+        llm_menu = self.menu.addMenu("🧠 AI Engine")
+        llm_status = QAction(self.llm.get_status_text(), self)
+        llm_status.setEnabled(False)
+        llm_menu.addAction(llm_status)
+        llm_menu.addSeparator()
+        llm_menu.addAction("▶️ Start").triggered.connect(
+            lambda _=False: self.llm.start()
+        )
+        llm_menu.addAction("⏹️ Stop").triggered.connect(
+            lambda _=False: self.llm.stop()
+        )
+        llm_menu.addAction("🔄 Restart").triggered.connect(
+            lambda _=False: self.llm.restart()
+        )
+        llm_menu.setEnabled(self.llm.available)
+
+        self.menu.addSeparator()
+
         # --- Auto Settings ---
         auto_action = QAction("🔄 Auto Settings Adjust", self)
         auto_action.setCheckable(True)
@@ -899,6 +1003,7 @@ class CommandCenterApp(QSystemTrayIcon):
         try:
             self.power.refresh_availability()
             self.rgb.refresh_availability()
+            self.llm.refresh_availability()
             self.power.check_auto_switch()
             self.update_icon()
             if self.dashboard.isVisible(): self.dashboard.update_ui_states()
