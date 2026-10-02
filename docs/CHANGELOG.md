@@ -2,6 +2,11 @@
 
 All notable changes to Strix Halo Linux Setup will be documented in this file.
 
+## [6.12.0] - 2026-10-02
+
+### Changed
+- **Auto Settings now actually saves power on battery**: tray profile switches mirror onto power-profiles-daemon (power-saver on emergency/battery/efficient, balanced on quiet/balanced, performance on performance/gaming/maximum), so amd_pstate EPP follows the selected profile. Default battery profile changed from balanced (40W) to efficient (30W).
+
 ## [6.11.0] - 2026-10-02
 
 ### Changed

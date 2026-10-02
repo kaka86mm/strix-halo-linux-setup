@@ -1,4 +1,5 @@
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -19,6 +20,19 @@ POWER_PROFILES = {
 _AUTO_CONFIG_FILE = Path.home() / ".config" / "strix-halo" / "auto.conf"
 _PROFILE_CACHE_FILE = Path.home() / ".config" / "strix-halo" / "tray-profile.conf"
 
+# Tray profile -> power-profiles-daemon profile. The daemon owns amd_pstate EPP;
+# flipping it alongside the z13ctl TDP profile is what actually saves idle watts.
+_PPD_TARGETS = {
+    "emergency": "power-saver",
+    "battery": "power-saver",
+    "efficient": "power-saver",
+    "quiet": "balanced",
+    "balanced": "balanced",
+    "performance": "performance",
+    "gaming": "performance",
+    "maximum": "performance",
+}
+
 
 class PowerController:
     """Manages power profiles and battery settings via z13ctl."""
@@ -29,7 +43,7 @@ class PowerController:
         self.current_profile = self._read_current_profile()
         self._auto_enabled = False
         self._ac_profile = "performance"
-        self._battery_profile = "balanced"
+        self._battery_profile = "efficient"
         self._last_plugged = None
         self._load_auto_config()
 
@@ -257,6 +271,25 @@ class PowerController:
         tdp = spec.get("tdp") or 40
         return tdp, tdp, tdp
 
+    def _apply_platform_profile(self, profile):
+        """Mirror the tray profile onto power-profiles-daemon (EPP control)."""
+        target = _PPD_TARGETS.get(profile)
+        if not target or not shutil.which("powerprofilesctl"):
+            return False
+        for cmd in (
+            ["powerprofilesctl", "set", target],
+            ["sudo", "-n", "powerprofilesctl", "set", target],
+        ):
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=8
+                )
+            except Exception:
+                continue
+            if result.returncode == 0:
+                return True
+        return False
+
     def set_profile(self, profile):
         if not self.available:
             return self._notify_unavailable("Profile changes")
@@ -286,6 +319,8 @@ class PowerController:
                     if tdp_val > 75:
                         tdp_cmd.append("--force")
                     self._run_z13ctl(tdp_cmd, timeout=10)
+                # Mirror onto power-profiles-daemon so EPP follows the profile
+                self._apply_platform_profile(profile)
                 return True
             else:
                 self.notifier.notify_error("Profile Change Failed", self._result_error(result))
