@@ -139,8 +139,11 @@ class DisplayController:
             # specs: [(connector, monitor_mode_id, properties)].
             monitor_spec = (panel, target["id"], {})
             lm_tuple = (x, y, scale, transform, primary, [monitor_spec])
+            # method=1 applies silently; method=2 (persistent) triggers the
+            # shell confirmation flow on GNOME 50 (observed on-device).
+            # Re-applied on every power transition, so temporary is fine.
             args = GLib.Variant(
-                "(uua(iiduba(ssa{sv}))a{sv})", (serial, 2, [lm_tuple], {})
+                "(uua(iiduba(ssa{sv}))a{sv})", (serial, 1, [lm_tuple], {})
             )
             proxy = self._get_proxy()
             proxy.call_sync(
@@ -152,9 +155,9 @@ class DisplayController:
             )
             self.notifier.notify(
                 "Display",
-                f"Panel set to {rate} Hz",
+                f"Panel {current['rate']} → {rate} Hz",
                 "success",
-                2000,
+                2500,
             )
             return True
         except Exception as e:
