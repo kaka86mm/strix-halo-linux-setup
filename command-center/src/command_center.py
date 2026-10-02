@@ -94,7 +94,8 @@ class LLMMetricsDialog(QDialog):
             ("model", "Model"),
             ("status", "Engine"),
             ("uptime", "Uptime"),
-            ("mem_used", "Memory (unified)"),
+            ("gtt", "GPU memory (unified)"),
+            ("mem_used", "Container RSS"),
             ("cpu_pct", "CPU"),
             ("processing", "Requests processing"),
             ("deferred", "Requests deferred"),
@@ -168,6 +169,12 @@ class LLMMetricsDialog(QDialog):
         setv("model", data.get("model") or "--")
         setv("status", status_map.get(data.get("status"), data.get("status") or "--"))
         setv("uptime", _fmt_duration(data.get("uptime_secs")))
+        setv(
+            "gtt",
+            "--"
+            if data.get("gtt_used_gib") is None
+            else f"{data['gtt_used_gib']:.1f} / {data['gtt_total_gib']:.0f} GiB",
+        )
         setv("mem_used", data.get("mem_used") or "--")
         setv("cpu_pct", data.get("cpu_pct") or "--")
         setv("processing", "--" if data.get("processing") is None else data["processing"])

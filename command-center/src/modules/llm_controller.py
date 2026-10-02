@@ -143,6 +143,22 @@ class LLMController:
         except Exception:
             return None
 
+    def _read_gtt(self):
+        """Real unified-memory usage from amdgpu sysfs (world-readable)."""
+        try:
+            from pathlib import Path as _P
+            for card in _P("/sys/class/drm").glob("card[0-9]"):
+                used_f = card / "device" / "mem_info_gtt_used"
+                total_f = card / "device" / "mem_info_gtt_total"
+                if used_f.exists() and total_f.exists():
+                    used = int(used_f.read_text().strip())
+                    total = int(total_f.read_text().strip())
+                    if total > 0:
+                        return used / 2**30, total / 2**30
+        except Exception:
+            pass
+        return None, None
+
     def get_metrics(self):
         """Collect a metrics snapshot: engine endpoints + docker sampling.
 
@@ -162,6 +178,8 @@ class LLMController:
             "predict_tps": None,
             "cpu_pct": None,
             "mem_used": None,
+            "gtt_used_gib": None,
+            "gtt_total_gib": None,
             "uptime_secs": None,
             "restarts": None,
         }
@@ -207,6 +225,10 @@ class LLMController:
                         out["predict_tps"] = num
         except Exception:
             pass
+
+        gtt_used, gtt_total = self._read_gtt()
+        out["gtt_used_gib"] = gtt_used
+        out["gtt_total_gib"] = gtt_total
 
         stats = self._run_docker(
             [
