@@ -4,7 +4,7 @@ set -euo pipefail
 
 # ==============================================================================
 # Strix Halo Device Profile Data Library
-# Version: 6.10.0
+# Version: 6.11.0
 #
 # Single source of truth for the known Strix Halo device matrix used by the
 # installer, device detection, and generated documentation.

@@ -2,6 +2,11 @@
 
 All notable changes to Strix Halo Linux Setup will be documented in this file.
 
+## [6.11.0] - 2026-10-02
+
+### Changed
+- **AI Engine metrics dialog redesign**: Card-based layout matching the dashboard design language — status header with live state dot, four equal-width stat cards (GPU memory, decode speed, CPU, uptime) with monospace values and sub-labels, aligned two-column ENGINE/TOKENS grids, and an accent-styled Refresh action. Verified against rendered screenshots (no truncation/overlap, aligned cards and grids).
+
 ## [6.10.0] - 2026-10-02
 
 ### Added

@@ -40,7 +40,7 @@ from modules.power_controller import PowerController
 from modules.llm_controller import LLMController
 
 TRAY_ICON_SIZE = 24
-VERSION = "6.10.0"
+VERSION = "6.11.0"
 
 
 class _MetricsRelay(QObject):
@@ -74,71 +74,32 @@ class LLMMetricsDialog(QDialog):
             Qt.WindowType.Dialog | Qt.WindowType.WindowStaysOnTopHint
         )
         self._fetching = False
+        self.setMinimumWidth(560)
 
         self._relay = _MetricsRelay()
         self._relay.got.connect(self._apply)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 14, 16, 14)
-        root.setSpacing(10)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        title = QLabel(f"🧠 {self.llm.get_status_text()}")
-        title.setObjectName("llm_dialog_title")
-        self._title = title
-        root.addWidget(title)
-
-        form = QFormLayout()
-        form.setSpacing(6)
-        self._rows = {}
-        for key, label in [
-            ("model", "Model"),
-            ("status", "Engine"),
-            ("uptime", "Uptime"),
-            ("gtt", "GPU memory (unified)"),
-            ("mem_used", "Container RSS"),
-            ("cpu_pct", "CPU"),
-            ("processing", "Requests processing"),
-            ("deferred", "Requests deferred"),
+        root.addWidget(self._build_header())
+        root.addWidget(self._build_cards())
+        root.addWidget(self._build_detail("ENGINE", [
+            ("requests", "Requests in-flight"),
+            ("deferred", "Deferred"),
             ("kv_ratio", "KV cache usage"),
-            ("predict_tps", "Decode speed (last req)"),
-            ("prompt_tps", "Prefill speed (last req)"),
-            ("predict_total", "Tokens generated"),
-            ("prompt_total", "Tokens prefilled"),
             ("context_length", "Context window"),
-        ]:
-            val = QLabel("--")
-            val.setObjectName("llm_metric_value")
-            val.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextSelectableByMouse
-            )
-            form.addRow(label, val)
-            self._rows[key] = val
-        root.addLayout(form)
+        ]))
+        root.addWidget(self._build_detail("TOKENS", [
+            ("predict_total", "Generated"),
+            ("prompt_total", "Prefilled"),
+            ("predict_tps_last", "Decode speed (last)"),
+            ("prompt_tps_last", "Prefill speed (last)"),
+        ]))
+        root.addWidget(self._build_footer())
 
-        btns = QHBoxLayout()
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.setObjectName("llm_btn")
-        refresh_btn.setFixedHeight(30)
-        refresh_btn.clicked.connect(self._refresh)
-        btns.addWidget(refresh_btn)
-        btns.addStretch()
-        close_btn = QPushButton("Close")
-        close_btn.setObjectName("llm_btn")
-        close_btn.setFixedHeight(30)
-        close_btn.clicked.connect(self.accept)
-        btns.addWidget(close_btn)
-        root.addLayout(btns)
-
-        self.setStyleSheet("""
-            QDialog { background-color: #111; color: #ddd; font-size: 12px; }
-            QLabel#llm_dialog_title {
-                font-size: 14px; font-weight: bold; color: #ff4655;
-            }
-            QFormLayout { background: transparent; }
-            QLabel#llm_metric_value {
-                color: #eee; font-weight: bold;
-            }
-        """)
+        self.apply_styles()
         self.adjustSize()
 
         self._timer = QTimer(self)
@@ -146,6 +107,196 @@ class LLMMetricsDialog(QDialog):
         self._timer.start(2000)
         self._refresh()
 
+    # -- construction ------------------------------------------------
+    def _build_header(self):
+        header = QFrame()
+        header.setObjectName("llm_header")
+        hbox = QHBoxLayout(header)
+        hbox.setContentsMargins(16, 12, 12, 12)
+        hbox.setSpacing(10)
+
+        self._status_dot = QLabel("●")
+        self._status_dot.setToolTip("engine /health status")
+        self._status_dot.setObjectName("llm_dot")
+        self._status_dot.setProperty("state", "loading")
+        hbox.addWidget(self._status_dot)
+
+        self._status_txt = QLabel("…")
+        self._status_txt.setObjectName("llm_status_txt")
+        hbox.addWidget(self._status_txt)
+        hbox.addStretch()
+
+        self._model_txt = QLabel("gufo")
+        self._model_txt.setObjectName("llm_model_txt")
+        hbox.addWidget(self._model_txt)
+
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("llm_close_btn")
+        close_btn.setFixedSize(26, 26)
+        close_btn.clicked.connect(self.accept)
+        hbox.addWidget(close_btn)
+        return header
+
+    def _metric_card(self, label):
+        card = QFrame()
+        card.setObjectName("llm_card")
+        card.setMinimumHeight(66)
+        vbox = QVBoxLayout(card)
+        vbox.setContentsMargins(10, 8, 10, 8)
+        vbox.setSpacing(2)
+        lbl = QLabel(label)
+        lbl.setObjectName("llm_card_label")
+        val = QLabel("--")
+        val.setObjectName("llm_card_value")
+        sub = QLabel(" ")
+        sub.setObjectName("llm_card_sub"
+        )
+        vbox.addWidget(lbl)
+        vbox.addWidget(val)
+        vbox.addWidget(sub)
+        card._value = val
+        card._sub = sub
+        return card
+
+    def _build_cards(self):
+        wrap = QFrame()
+        wrap.setObjectName("llm_cards_wrap")
+        hbox = QHBoxLayout(wrap)
+        hbox.setContentsMargins(14, 12, 14, 4)
+        hbox.setSpacing(8)
+        self._cards = {}
+        for key, label in [
+            ("gpu", "GPU MEMORY"),
+            ("predict_tps", "DECODE"),
+            ("cpu_pct", "CPU"),
+            ("uptime", "UPTIME"),
+        ]:
+            card = self._metric_card(label)
+            self._cards[key] = card
+            hbox.addWidget(card)
+        return wrap
+
+    def _build_detail(self, title, rows):
+        section = QFrame()
+        section.setObjectName("llm_detail")
+        vbox = QVBoxLayout(section)
+        vbox.setContentsMargins(14, 8, 14, 8)
+        vbox.setSpacing(6)
+
+        ttl = QLabel(title)
+        ttl.setObjectName("section_title")
+        vbox.addWidget(ttl)
+
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        self._rows = getattr(self, "_rows", {})
+        for i, (key, label) in enumerate(rows):
+            lbl = QLabel(label)
+            lbl.setObjectName("llm_row_label")
+            val = QLabel("--")
+            val.setObjectName("llm_row_value")
+            grid.addWidget(lbl, i // 2, (i % 2) * 2)
+            grid.addWidget(val, i // 2, (i % 2) * 2 + 1)
+            self._rows[key] = val
+        grid.setColumnMinimumWidth(0, 130)
+        grid.setColumnMinimumWidth(2, 130)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+        vbox.addLayout(grid)
+        return section
+
+    def _build_footer(self):
+        footer = QFrame()
+        footer.setObjectName("llm_footer")
+        hbox = QHBoxLayout(footer)
+        hbox.setContentsMargins(14, 8, 14, 10)
+        note = QLabel("auto-refresh · 2s")
+        note.setObjectName("llm_note")
+        hbox.addWidget(note)
+        hbox.addStretch()
+
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setObjectName("llm_btn_accent")
+        refresh_btn.setFixedHeight(30)
+        refresh_btn.clicked.connect(self._refresh)
+        hbox.addWidget(refresh_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("llm_btn")
+        close_btn.setFixedHeight(30)
+        close_btn.clicked.connect(self.accept)
+        hbox.addWidget(close_btn)
+        return footer
+
+    def apply_styles(self):
+        self.setStyleSheet("""
+            QDialog { background-color: #111; color: #ddd; }
+            #llm_header { background-color: #1a1a1a; }
+            #llm_dot { font-size: 14px; }
+            #llm_dot[state="serving"] { color: #2ecc71; }
+            #llm_dot[state="loading"] { color: #f1c40f; }
+            #llm_dot[state="stopped"] { color: #555; }
+            #llm_status_txt {
+                font-size: 13px; font-weight: bold; color: #eee;
+            }
+            #llm_model_txt { font-size: 11px; color: #999; }
+            #llm_close_btn {
+                background: transparent; border: none; color: #555;
+                font-size: 13px; padding: 0;
+            }
+            #llm_close_btn:hover { color: #ff4655; }
+            #llm_cards_wrap { background-color: #111; }
+            #llm_card {
+                background-color: #1c1c1c;
+                border: 1px solid #232323;
+                border-radius: 8px;
+            }
+            #llm_card_label {
+                font-size: 9px; color: #777;
+                letter-spacing: 1px;
+            }
+            #llm_card_value {
+                font-size: 16px; font-weight: bold; color: #eee;
+                font-family: "JetBrains Mono", "DejaVu Sans Mono", monospace;
+            }
+            #llm_card_sub {
+                font-size: 10px; color: #666;
+            }
+            #llm_detail { background-color: #111; }
+            .QLabel#section_title { font-size: 9px; }
+            #llm_row_label { font-size: 11px; color: #999; }
+            #llm_row_value {
+                font-size: 11px; font-weight: bold; color: #ddd;
+                font-family: "JetBrains Mono", "DejaVu Sans Mono", monospace;
+            }
+            #llm_footer { background-color: #0d0d0d; }
+            #llm_note { font-size: 10px; color: #444; }
+            QPushButton#llm_btn {
+                background-color: #1c1c1c;
+                border: 1px solid #2a2a2a;
+                border-radius: 5px;
+                color: #aaa;
+                padding: 0 14px;
+            }
+            QPushButton#llm_btn:hover {
+                background-color: #252525;
+                border-color: #444;
+                color: #fff;
+            }
+            QPushButton#llm_btn_accent {
+                background-color: #12251b;
+                border: 1px solid #2ecc71;
+                border-radius: 5px;
+                color: #2ecc71;
+                padding: 0 14px;
+            }
+            QPushButton#llm_btn_accent:hover {
+                background-color: #1a3325;
+                color: #4be28a;
+            }
+        """)
+
+    # -- data --------------------------------------------------------
     def _refresh(self):
         if self._fetching or self.llm is None:
             return
@@ -160,38 +311,49 @@ class LLMMetricsDialog(QDialog):
         if not data:
             return
         status_map = {
-            "serving": "● Serving",
-            "loading": "◐ Loading",
-            "stopped": "○ Stopped",
+            "serving": "Serving",
+            "loading": "Loading",
+            "stopped": "Stopped",
         }
+        st = data.get("status")
+        self._status_txt.setText(status_map.get(st, st or "--"))
+        for w in (self._status_dot,):
+            w.setProperty("state", st or "stopped")
+            w.style().unpolish(w)
+            w.style().polish(w)
+        self._model_txt.setText(data.get("model") or "--")
+
+        self._cards["gpu"]._value.setText(
+            f"{(data.get('gtt_used_gib') or 0):.1f} GiB"
+            if data.get("gtt_used_gib") is not None else "--"
+        )
+        self._cards["gpu"]._sub.setText(
+            f"of {data['gtt_total_gib']:.0f} GiB"
+            if data.get("gtt_total_gib") else " "
+        )
+        self._cards["predict_tps"]._value.setText(
+            f"{data['predict_tps']:.1f}" if data.get("predict_tps") is not None else "--"
+        )
+        self._cards["predict_tps"]._sub.setText("tok/s · last request")
+        self._cards["cpu_pct"]._value.setText(data.get("cpu_pct") or "--")
+        self._cards["cpu_pct"]._sub.setText("docker container")
+        self._cards["uptime"]._value.setText(_fmt_duration(data.get("uptime_secs")))
+        self._cards["uptime"]._sub.setText(
+            "restarts: %s" % data.get("restarts", "--")
+        )
+        self._cards["uptime"]._sub.setToolTip("container restart count")
+
         def setv(key, text):
             self._rows[key].setText(str(text))
-        setv("model", data.get("model") or "--")
-        setv("status", status_map.get(data.get("status"), data.get("status") or "--"))
-        setv("uptime", _fmt_duration(data.get("uptime_secs")))
-        setv(
-            "gtt",
-            "--"
-            if data.get("gtt_used_gib") is None
-            else f"{data['gtt_used_gib']:.1f} / {data['gtt_total_gib']:.0f} GiB",
-        )
-        setv("mem_used", data.get("mem_used") or "--")
-        setv("cpu_pct", data.get("cpu_pct") or "--")
-        setv("processing", "--" if data.get("processing") is None else data["processing"])
+        setv("requests", "--" if data.get("processing") is None else data["processing"])
         setv("deferred", "--" if data.get("deferred") is None else data["deferred"])
         setv(
             "kv_ratio",
-            "--"
-            if data.get("kv_ratio") is None
-            else f"{data['kv_ratio'] * 100:.1f}%",
+            "--" if data.get("kv_ratio") is None else f"{data['kv_ratio'] * 100:.1f}%",
         )
         setv(
-            "predict_tps",
-            "--" if data.get("predict_tps") is None else f"{data['predict_tps']:.1f} tok/s",
-        )
-        setv(
-            "prompt_tps",
-            "--" if data.get("prompt_tps") is None else f"{data['prompt_tps']:.0f} tok/s",
+            "context_length",
+            "--" if data.get("context_length") is None else f"{data['context_length']:,}",
         )
         setv(
             "predict_total",
@@ -202,23 +364,14 @@ class LLMMetricsDialog(QDialog):
             "--" if data.get("prompt_total") is None else f"{data['prompt_total']:,}",
         )
         setv(
-            "context_length",
-            "--" if data.get("context_length") is None else f"{data['context_length']:,}",
+            "predict_tps_last",
+            "--" if data.get("predict_tps") is None else f"{data['predict_tps']:.1f} tok/s",
         )
-        self._title.setText(f"🧠 {self.llm.get_status_text()}")
-DASHBOARD_WINDOW_TITLE = "Strix Halo Dashboard"
-DASHBOARD_WINDOW_ROLE = "strix-halo-dashboard"
-KWIN_DASHBOARD_SCRIPT_NAME = "strix_halo_dashboard_anchor"
-RGB_COLOR_PRESETS = [
-    ("Ice", "7FDBFF"),
-    ("Mint", "2ECC71"),
-    ("Lemon", "F1C40F"),
-    ("Amber", "F39C12"),
-    ("Coral", "FF6B6B"),
-    ("Rose", "FF4D8D"),
-    ("Violet", "9B59B6"),
-    ("White", "FFFFFF"),
-]
+        setv(
+            "prompt_tps_last",
+            "--" if data.get("prompt_tps") is None else f"{data['prompt_tps']:.0f} tok/s",
+        )
+
 
 class DashboardWindow(QWidget):
     """G-Helper-style compact popup panel."""
