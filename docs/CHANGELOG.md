@@ -2,6 +2,11 @@
 
 All notable changes to Strix Halo Linux Setup will be documented in this file.
 
+## [6.14.1] - 2026-10-03
+
+### Fixed
+- **AC plug-in was never detected**: `get_battery_info()` picked the first power-supply node with status+capacity, which on this device is a HID peripheral battery that reports Discharging forever — auto-switch never saw the AC transition and stayed in battery mode. Real `BAT*` nodes are now preferred and `hid-*` supplies skipped.
+
 ## [6.14.0] - 2026-10-03
 
 ### Added

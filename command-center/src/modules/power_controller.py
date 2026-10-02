@@ -433,16 +433,24 @@ class PowerController:
 
     def get_battery_info(self):
         try:
-            for sup in Path("/sys/class/power_supply").glob("*"):
-                if (sup / "status").exists():
+            # Real battery nodes first; HID peripheral batteries
+            # (hid-*-battery) report "Discharging" forever and glob order
+            # can put them ahead of BAT*, which broke AC detection.
+            supplies = sorted(Path("/sys/class/power_supply").glob("BAT*"))
+            supplies += [
+                s
+                for s in sorted(Path("/sys/class/power_supply").glob("*"))
+                if not s.name.startswith("BAT") and not s.name.startswith("hid-")
+            ]
+            for sup in supplies:
+                if (sup / "status").exists() and (sup / "capacity").exists():
                     status = (sup / "status").read_text().strip().lower()
-                    if (sup / "capacity").exists():
-                        pct = int((sup / "capacity").read_text().strip())
-                        return {
-                            "percent": pct,
-                            "plugged": status != "discharging",
-                            "status": status,
-                        }
+                    pct = int((sup / "capacity").read_text().strip())
+                    return {
+                        "percent": pct,
+                        "plugged": status != "discharging",
+                        "status": status,
+                    }
         except Exception:
             pass
         return {"percent": None, "plugged": None, "status": "unknown"}

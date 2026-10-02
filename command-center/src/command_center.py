@@ -41,7 +41,7 @@ from modules.llm_controller import LLMController
 from modules.display_controller import DisplayController
 
 TRAY_ICON_SIZE = 24
-VERSION = "6.14.0"
+VERSION = "6.14.1"
 
 DASHBOARD_WINDOW_TITLE = "Strix Halo Dashboard"
 DASHBOARD_WINDOW_ROLE = "strix-halo-dashboard"
