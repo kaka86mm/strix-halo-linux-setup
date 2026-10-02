@@ -11,13 +11,15 @@ import shutil
 import subprocess
 import re
 from pathlib import Path
+from threading import Thread
 from PyQt6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QFrame, QGridLayout,
-    QColorDialog, QSlider, QProgressBar, QLineEdit, QSizePolicy
+    QColorDialog, QSlider, QProgressBar, QLineEdit, QSizePolicy,
+    QDialog, QFormLayout
 )
 from PyQt6.QtGui import QIcon, QAction, QActionGroup, QColor, QFont, QPainter, QPixmap, QCursor
-from PyQt6.QtCore import QTimer, Qt, QPoint, QRect, QSize
+from PyQt6.QtCore import QTimer, Qt, QPoint, QRect, QSize, QObject, pyqtSignal
 
 try:
     from PyQt6.QtSvg import QSvgRenderer
@@ -38,7 +40,165 @@ from modules.power_controller import PowerController
 from modules.llm_controller import LLMController
 
 TRAY_ICON_SIZE = 24
-VERSION = "6.9.0"
+VERSION = "6.10.0"
+
+
+class _MetricsRelay(QObject):
+    """Carries worker-thread metric snapshots into the Qt main thread."""
+
+    got = pyqtSignal(dict)
+
+
+def _fmt_duration(secs):
+    if secs is None:
+        return "--"
+    secs = int(secs)
+    d, secs = divmod(secs, 86400)
+    h, secs = divmod(secs, 3600)
+    m, _ = divmod(secs, 60)
+    if d:
+        return f"{d}d {h}h {m}m"
+    if h:
+        return f"{h}h {m}m"
+    return f"{m}m"
+
+
+class LLMMetricsDialog(QDialog):
+    """Live runtime metrics for the gufo engine, auto-refreshed every 2s."""
+
+    def __init__(self, llm_ctrl, parent=None):
+        super().__init__(parent)
+        self.llm = llm_ctrl
+        self.setWindowTitle("AI Engine Metrics")
+        self.setWindowFlags(
+            Qt.WindowType.Dialog | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self._fetching = False
+
+        self._relay = _MetricsRelay()
+        self._relay.got.connect(self._apply)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(10)
+
+        title = QLabel(f"🧠 {self.llm.get_status_text()}")
+        title.setObjectName("llm_dialog_title")
+        self._title = title
+        root.addWidget(title)
+
+        form = QFormLayout()
+        form.setSpacing(6)
+        self._rows = {}
+        for key, label in [
+            ("model", "Model"),
+            ("status", "Engine"),
+            ("uptime", "Uptime"),
+            ("mem_used", "Memory (unified)"),
+            ("cpu_pct", "CPU"),
+            ("processing", "Requests processing"),
+            ("deferred", "Requests deferred"),
+            ("kv_ratio", "KV cache usage"),
+            ("predict_tps", "Decode speed (last req)"),
+            ("prompt_tps", "Prefill speed (last req)"),
+            ("predict_total", "Tokens generated"),
+            ("prompt_total", "Tokens prefilled"),
+            ("context_length", "Context window"),
+        ]:
+            val = QLabel("--")
+            val.setObjectName("llm_metric_value")
+            val.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+            form.addRow(label, val)
+            self._rows[key] = val
+        root.addLayout(form)
+
+        btns = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setObjectName("llm_btn")
+        refresh_btn.setFixedHeight(30)
+        refresh_btn.clicked.connect(self._refresh)
+        btns.addWidget(refresh_btn)
+        btns.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("llm_btn")
+        close_btn.setFixedHeight(30)
+        close_btn.clicked.connect(self.accept)
+        btns.addWidget(close_btn)
+        root.addLayout(btns)
+
+        self.setStyleSheet("""
+            QDialog { background-color: #111; color: #ddd; font-size: 12px; }
+            QLabel#llm_dialog_title {
+                font-size: 14px; font-weight: bold; color: #ff4655;
+            }
+            QFormLayout { background: transparent; }
+            QLabel#llm_metric_value {
+                color: #eee; font-weight: bold;
+            }
+        """)
+        self.adjustSize()
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._refresh)
+        self._timer.start(2000)
+        self._refresh()
+
+    def _refresh(self):
+        if self._fetching or self.llm is None:
+            return
+        self._fetching = True
+        def work():
+            data = self.llm.get_metrics() or {}
+            self._relay.got.emit(data)
+        Thread(target=work, daemon=True).start()
+
+    def _apply(self, data):
+        self._fetching = False
+        if not data:
+            return
+        status_map = {
+            "serving": "● Serving",
+            "loading": "◐ Loading",
+            "stopped": "○ Stopped",
+        }
+        def setv(key, text):
+            self._rows[key].setText(str(text))
+        setv("model", data.get("model") or "--")
+        setv("status", status_map.get(data.get("status"), data.get("status") or "--"))
+        setv("uptime", _fmt_duration(data.get("uptime_secs")))
+        setv("mem_used", data.get("mem_used") or "--")
+        setv("cpu_pct", data.get("cpu_pct") or "--")
+        setv("processing", "--" if data.get("processing") is None else data["processing"])
+        setv("deferred", "--" if data.get("deferred") is None else data["deferred"])
+        setv(
+            "kv_ratio",
+            "--"
+            if data.get("kv_ratio") is None
+            else f"{data['kv_ratio'] * 100:.1f}%",
+        )
+        setv(
+            "predict_tps",
+            "--" if data.get("predict_tps") is None else f"{data['predict_tps']:.1f} tok/s",
+        )
+        setv(
+            "prompt_tps",
+            "--" if data.get("prompt_tps") is None else f"{data['prompt_tps']:.0f} tok/s",
+        )
+        setv(
+            "predict_total",
+            "--" if data.get("predict_total") is None else f"{data['predict_total']:,}",
+        )
+        setv(
+            "prompt_total",
+            "--" if data.get("prompt_total") is None else f"{data['prompt_total']:,}",
+        )
+        setv(
+            "context_length",
+            "--" if data.get("context_length") is None else f"{data['context_length']:,}",
+        )
+        self._title.setText(f"🧠 {self.llm.get_status_text()}")
 DASHBOARD_WINDOW_TITLE = "Strix Halo Dashboard"
 DASHBOARD_WINDOW_ROLE = "strix-halo-dashboard"
 KWIN_DASHBOARD_SCRIPT_NAME = "strix_halo_dashboard_anchor"
@@ -359,10 +519,21 @@ class DashboardWindow(QWidget):
         hbox = QHBoxLayout()
         hbox.setSpacing(6)
 
-        self.llm_status_lbl = QLabel(self.llm.get_status_text())
+        from modules.llm_controller import LLM_MODEL_ID
+
+        self.llm_status_lbl = QLabel(f"{LLM_MODEL_ID} · {self.llm.get_status_text()}")
         self.llm_status_lbl.setObjectName("llm_status")
+        self.llm_status_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.llm_status_lbl.setToolTip("Click for live runtime metrics")
+        self.llm_status_lbl.mousePressEvent = lambda _e: self._llm_show_metrics()
         hbox.addWidget(self.llm_status_lbl)
         hbox.addStretch()
+
+        metrics_btn = QPushButton("📊 Metrics")
+        metrics_btn.setObjectName("llm_btn")
+        metrics_btn.setFixedHeight(28)
+        metrics_btn.clicked.connect(lambda: self._llm_show_metrics())
+        hbox.addWidget(metrics_btn)
 
         start_btn = QPushButton("Start")
         start_btn.setObjectName("llm_btn")
@@ -379,11 +550,23 @@ class DashboardWindow(QWidget):
         restart_btn.setFixedHeight(28)
         restart_btn.clicked.connect(lambda: self._llm_action("restart"))
 
-        self._llm_btns = (start_btn, stop_btn, restart_btn)
+        self._llm_btns = (metrics_btn, start_btn, stop_btn, restart_btn)
         for btn in self._llm_btns:
             hbox.addWidget(btn)
         vbox.addLayout(hbox)
         return section
+
+    def _llm_show_metrics(self):
+        if self.llm is None or not self.llm.available:
+            self.notifier.notify(
+                "AI Engine",
+                "gufo container not found on this device.",
+                "warning",
+                4000,
+            )
+            return
+        dlg = LLMMetricsDialog(self.llm, self)
+        dlg.exec()
 
     def _llm_action(self, action):
         if self.llm is None:
@@ -394,9 +577,10 @@ class DashboardWindow(QWidget):
     def _refresh_llm_state(self):
         if self.llm is None or not hasattr(self, "llm_status_lbl"):
             return
+        from modules.llm_controller import LLM_MODEL_ID
         running = self.llm.is_running() if self.llm.available else False
         ok, _ = self.llm.get_health() if running else (False, "")
-        self.llm_status_lbl.setText(self.llm.get_status_text())
+        self.llm_status_lbl.setText(f"{LLM_MODEL_ID} · {self.llm.get_status_text()}")
         self.llm_status_lbl.setProperty("state", "serving" if ok else ("loading" if running else "stopped"))
         # re-apply stylesheet so property-based selectors refresh
         self.llm_status_lbl.style().unpolish(self.llm_status_lbl)
@@ -867,6 +1051,9 @@ class CommandCenterApp(QSystemTrayIcon):
         llm_status.setEnabled(False)
         llm_menu.addAction(llm_status)
         llm_menu.addSeparator()
+        llm_menu.addAction("📊 Metrics").triggered.connect(
+            lambda _=False: self._show_llm_metrics()
+        )
         llm_menu.addAction("▶️ Start").triggered.connect(
             lambda _=False: self.llm.start()
         )
@@ -935,6 +1122,18 @@ class CommandCenterApp(QSystemTrayIcon):
         self.dashboard.update_ui_states()
         self.dashboard.show()
         QTimer.singleShot(0, self._finalize_dashboard_show)
+
+    def _show_llm_metrics(self):
+        if not self.llm.available:
+            self.notifier.notify(
+                "AI Engine",
+                "gufo container not found on this device.",
+                "warning",
+                4000,
+            )
+            return
+        dlg = LLMMetricsDialog(self.llm)
+        dlg.exec()
 
     def _finalize_dashboard_show(self):
         self.dashboard.popup_near_tray(self)

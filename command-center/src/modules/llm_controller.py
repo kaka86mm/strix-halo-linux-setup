@@ -2,6 +2,7 @@ import json
 import shutil
 import subprocess
 import urllib.request
+from datetime import datetime, timezone
 
 # gufo inference engine container (see docs/technical/AI-BACKEND.md).
 # Managed outside the dashboard via docker; the dashboard only starts/stops it.
@@ -129,3 +130,113 @@ class LLMController:
         if result and result.returncode == 0:
             return (result.stdout or "") + (result.stderr or "")
         return ""
+
+    # ------------------------------------------------------------------
+    # Runtime metrics (call from a worker thread; includes docker sampling)
+    # ------------------------------------------------------------------
+    def _http_json(self, path, timeout=3):
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{LLM_API_PORT}{path}", timeout=timeout
+            ) as resp:
+                return json.loads(resp.read().decode("utf-8", "replace"))
+        except Exception:
+            return None
+
+    def get_metrics(self):
+        """Collect a metrics snapshot: engine endpoints + docker sampling.
+
+        Blocking (docker stats samples ~2s) — call from a background thread.
+        """
+        out = {
+            "running": self.is_running(),
+            "model": LLM_MODEL_ID,
+            "context_length": None,
+            "status": "stopped",
+            "processing": None,
+            "deferred": None,
+            "kv_ratio": None,
+            "prompt_total": None,
+            "predict_total": None,
+            "prompt_tps": None,
+            "predict_tps": None,
+            "cpu_pct": None,
+            "mem_used": None,
+            "uptime_secs": None,
+            "restarts": None,
+        }
+        if not out["running"]:
+            return out
+
+        ok, _ = self.get_health()
+        out["status"] = "serving" if ok else "loading"
+
+        models = self._http_json("/v1/models")
+        try:
+            entry = models["data"][0]
+            out["model"] = entry.get("id", LLM_MODEL_ID)
+            out["context_length"] = entry.get("context_length")
+        except Exception:
+            pass
+
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{LLM_API_PORT}/metrics", timeout=3
+            ) as resp:
+                for line in resp.read().decode("utf-8", "replace").splitlines():
+                    if line.startswith("#") or " " not in line:
+                        continue
+                    key, _, val = line.partition(" ")
+                    try:
+                        num = float(val)
+                    except ValueError:
+                        continue
+                    if key.endswith("requests_processing"):
+                        out["processing"] = int(num)
+                    elif key.endswith("requests_deferred"):
+                        out["deferred"] = int(num)
+                    elif key.endswith("kv_cache_usage_ratio"):
+                        out["kv_ratio"] = num
+                    elif key.endswith("prompt_tokens_total"):
+                        out["prompt_total"] = int(num)
+                    elif key.endswith("tokens_predicted_total"):
+                        out["predict_total"] = int(num)
+                    elif key.endswith("prompt_tokens_seconds"):
+                        out["prompt_tps"] = num
+                    elif key.endswith("predicted_tokens_seconds"):
+                        out["predict_tps"] = num
+        except Exception:
+            pass
+
+        stats = self._run_docker(
+            [
+                "stats", "--no-stream",
+                "--format", "{{.CPUPerc}}\t{{.MemUsage}}",
+                LLM_CONTAINER,
+            ],
+            timeout=10,
+        )
+        if stats and stats.returncode == 0:
+            parts = stats.stdout.strip().split("\t")
+            if len(parts) == 2:
+                out["cpu_pct"] = parts[0].strip()
+                out["mem_used"] = parts[1].split("/")[0].strip()
+
+        insp = self._run_docker(
+            ["inspect", "-f", "{{.State.StartedAt}}\t{{.RestartCount}}", LLM_CONTAINER],
+            timeout=5,
+        )
+        if insp and insp.returncode == 0:
+            parts = insp.stdout.strip().split("\t")
+            try:
+                started = datetime.fromisoformat(
+                    parts[0].replace("Z", "+00:00")
+                )
+                out["uptime_secs"] = max(
+                    0, int((datetime.now(timezone.utc) - started).total_seconds())
+                )
+                out["restarts"] = int(parts[1])
+            except Exception:
+                pass
+
+        return out

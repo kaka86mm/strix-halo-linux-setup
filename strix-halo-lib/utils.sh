@@ -9,7 +9,7 @@ set -euo pipefail
 
 # ==============================================================================
 # Strix Halo Shared Utilities Library
-# Version: 6.9.0
+# Version: 6.10.0
 #
 # This library contains shared functions for the Strix Halo Linux Setup scripts.
 # It is sourced by strix-halo-setup.sh and all optional modules.

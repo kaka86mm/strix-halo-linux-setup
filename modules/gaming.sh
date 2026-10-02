@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Strix Halo Gaming Module
-# Version: 6.9.0
+# Version: 6.10.0
 #
 # This module installs gaming software for the ASUS ROG Flow Z13 (GZ302)
 # Includes: Steam, Lutris, MangoHUD, GameMode, Wine, and performance tools

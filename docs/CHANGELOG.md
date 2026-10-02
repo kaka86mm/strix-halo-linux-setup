@@ -2,6 +2,11 @@
 
 All notable changes to Strix Halo Linux Setup will be documented in this file.
 
+## [6.10.0] - 2026-10-02
+
+### Added
+- **AI Engine live metrics dialog**: Click the engine status line, the 📊 Metrics button, or the tray menu entry to open a live panel for the gufo container — model, context window, uptime, unified-memory/CPU usage (docker sampling), in-flight/deferred requests, KV cache usage, cumulative prefill/decode tokens, and last-request prefill/decode speeds from the engine's `/metrics` and `/v1/models` endpoints. Auto-refreshes every 2s via a worker thread so the UI never blocks.
+
 ## [6.9.0] - 2026-10-02
 
 ### Added

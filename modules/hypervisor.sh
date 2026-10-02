@@ -2,7 +2,7 @@
 
 # ==============================================================================
 # Strix Halo Hypervisor Module
-# Version: 6.9.0
+# Version: 6.10.0
 #
 # This module installs hypervisor software for the ASUS ROG Flow Z13 (GZ302)
 # Includes: Full KVM/QEMU stack, VirtualBox
